@@ -1,0 +1,189 @@
+########### Multi master node cluster with H.A proxy loadbalancer ( loadbalancer for api servers) ################
+
+to make high availability cluster we need to use HA proxy, so that if one master goes down though the user can execute kubectl commands and can use another master
+node api server to interact with the cluster.
+
+###  H.A proxy architecture ###
+
+kubectl,clients,etc  ---> H.A proxy --> k8s masters ---> k8s workers ---> H.A proxy
+
+so in the above client sends request to H.A proxy and proxy interacts with masters, masters will speak with workers and workers will send to H.A proxy in that way client
+will get the info or interacts
+
+step1:
+
+2 master nodes and 2 worker nodes and H.A proxy node -- sping up Ec2 instances for this
+
+stpe2:
+
+* login to the h.a proxy server
+
+* run commadn $ sudo apt-get update && sudo apt-get upgrade -y
+
+* install H.A proxy software using command $ sudo apt-get install haproxy -y
+
+* edit the haproxy configuration using command $ vim /etc/haproxy/haproxy.cfg and add the below lines below:
+  
+	  a. To create a frontend cofiguration:
+	    
+		frontend fe-apiserver
+		   bind 0.0.0.0:6443
+		   mode tcp
+		   option tcplog
+		   default_backend be-apiserver
+	     
+  
+	  b. To create a backend configuration for master nodes at port 6443 ( becoz 6443 is the default kube-api server
+	  
+	       
+		 backend be-apiserver
+		      mode tcp
+		      option tcplog
+		      option tcp-check
+		      balance roundrobin
+		      default-server inter 10s downinter 5s rise 2 fall 2 slowstart 60s maxconn 250 maxqueue 256 weight 100
+
+			  server k8s-master1 172.31.58.56:6443 check
+			  server k8s-master2 172.31.48.238:6443 check
+
+* Note: master ips should be private IPs
+
+* restart the haproxy 
+    
+    a. systemctl restart haproxy
+    b. systemctl status haproxy
+
+step3:
+
+Install al the required softwares to setup kubecluster( dont execute kubeadm init in this step)
+
+Step4:
+
+* configure the kubeadm to bootstrap the cluster
+
+* login to the master1 
+
+* execute the command to bootstrap the cluster
+
+$ sudo kubeadm init --control-plane-endpoint "<LoadbalancerIP:LoadbalancerPort>" --upload-certs  --cri-socket=unix:///var/run/cri-dockerd.sock
+
+  Ex: sudo kubeadm init --pod-network-cidr=10.244.0.0/16 --control-plane-endpoint 172.31.85.175:6443 --upload-certs --cri-socket=unix:///var/run/cri-dockerd.sock
+
+Note:in the above command "LoadbalancerIP is the private IP and port is the port which we configured as front end for now i am assuming as 6443
+
+
+* After running above commad the output will be like as below and if we can add masters and workers to the cluster usning below instructions:
+
+
+=========
+
+Your Kubernetes control-plane has initialized successfully!
+
+To start using your cluster, you need to run the following as a regular user:
+
+  mkdir -p $HOME/.kube
+  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+  sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+Alternatively, if you are the root user, you can run:
+
+  export KUBECONFIG=/etc/kubernetes/admin.conf
+
+You should now deploy a pod network to the cluster.
+Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
+  https://kubernetes.io/docs/concepts/cluster-administration/addons/
+
+You can now join any number of the control-plane node running the following command on each as root:
+
+  kubeadm join 172.31.85.175:6443 --token jci74e.ywjjujn05ckpt4pw \
+	--discovery-token-ca-cert-hash sha256:92b6b4520f15bd5506110c0113998065a6a1442eaaaa2216f4f8ce99d5ec550d \
+	--control-plane --certificate-key 3348570570a2097f2c393cf40cc7e7eb5e031aacd9a838616fa726f54d288aa5
+
+Please note that the certificate-key gives access to cluster sensitive data, keep it secret!
+As a safeguard, uploaded-certs will be deleted in two hours; If necessary, you can use
+"kubeadm init phase upload-certs --upload-certs" to reload certs afterward.
+
+Then you can join any number of worker nodes by running the following on each as root:
+
+kubeadm join 172.31.85.175:6443 --token jci74e.ywjjujn05ckpt4pw \
+	--discovery-token-ca-cert-hash sha256:92b6b4520f15bd5506110c0113998065a6a1442eaaaa2216f4f8ce99d5ec550d 
+
+=========
+   
+* run the kubeadm join command on the another node which you are willing to add the as master to the cluster. command will look like as below:
+   
+$ sudo kubeadm join 172.31.85.175:6443 --token jci74e.ywjjujn05ckpt4pw \
+	--discovery-token-ca-cert-hash sha256:92b6b4520f15bd5506110c0113998065a6a1442eaaaa2216f4f8ce99d5ec550d \
+	--control-plane --certificate-key 3348570570a2097f2c393cf40cc7e7eb5e031aacd9a838616fa726f54d288aa5  --cri-socket=unix:///var/run/cri-dockerd.sock
+	
+
+Output:
+
+========
+
+
+This node has joined the cluster and a new control plane instance was created:
+
+* Certificate signing request was sent to apiserver and approval was received.
+* The Kubelet was informed of the new secure connection details.
+* Control plane label and taint were applied to the new node.
+* The Kubernetes control plane instances scaled up.
+* A new etcd member was added to the local/stacked etcd cluster.
+
+To start administering your cluster from this node, you need to run the following as a regular user:
+
+	mkdir -p $HOME/.kube
+	sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+	sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+Run 'kubectl get nodes' to see this node join the cluster.
+
+
+=======	
+
+step6:
+
+* using kubeadm join command join the worker nodes into the cluster
+
+
+Command:
+
+sudo kubeadm join 172.31.85.175:6443 --token jci74e.ywjjujn05ckpt4pw \
+	--discovery-token-ca-cert-hash sha256:92b6b4520f15bd5506110c0113998065a6a1442eaaaa2216f4f8ce99d5ec550d --cri-socket=unix:///var/run/cri-dockerd.sock
+	
+Step7:
+
+* We have successfully joined two master nodes and worker nodes into the cluster, then to interact with kubeapi server,to create pods and to create services we need to interact with kubeapi server
+
+* we have deployed 2 masters so there will be 2 kubeapi servers and those are accessble via HAproxy so to interact with apiserver we need to create kubeconfig file and need to install kubectl on either HAproxy loadbalancero or on any other machine
+
+* for now i am doing on the HAproxy server only follow the below steps:
+
+a. login to the HAproxy node 
+b. exit from sudo if you are and run below commands:
+ 
+$ mkdir -p $HOME/.kube   -- create kube directory
+ 
+c. go to master machine copy the content of the file -- /etc/kubernetes/admin.conf 
+d. create a file under kube directory in the haproxy server ( $ vim ~/.kube/config ) 
+e. paste the content of admin.conf file in the config file, save and quit
+f. install kubectl and run kubectl get nodes
+
+step8:
+
+* Install container network interface on the haproxy server ( calico )
+* verify the cluster
+
+Special note:
+
+
+if you want to access your cluster from any other machine or node you need insall kubectl and create a kube directory and config file and copy admin.conf content from the master machine then paste that
+content in the config file
+
+* if you want to deploy apps create yaml fles and deploy from the client machine itsself
+
+ 
+
+
+
+
