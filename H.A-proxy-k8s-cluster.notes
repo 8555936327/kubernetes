@@ -1,4 +1,4 @@
-########### Multi master node cluster with H.A proxy loadbalancer ( loadbalancer for api servers) ################
+############### Multi master node cluster with H.A proxy loadbalancer ( loadbalancer for api servers) ################
 
 to make high availability cluster we need to use HA proxy, so that if one master goes down though the user can execute kubectl commands and can use another master
 node api server to interact with the cluster.
